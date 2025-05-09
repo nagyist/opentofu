@@ -280,7 +280,7 @@ The -target and -exclude options are not for routine use, and are provided only 
 	}
 
 	if plan != nil {
-		relevantAttrs, rDiags := c.relevantResourceAttrsForPlan(config, plan)
+		relevantAttrs, rDiags := c.relevantResourceAttrsForPlan(ctx, config, plan)
 		diags = diags.Append(rDiags)
 		plan.RelevantAttributes = relevantAttrs
 	}
@@ -296,7 +296,7 @@ The -target and -exclude options are not for routine use, and are provided only 
 		return plan, diags
 	}
 
-	diags = diags.Append(c.checkApplyGraph(plan, config))
+	diags = diags.Append(c.checkApplyGraph(ctx, plan, config))
 
 	return plan, diags
 }
@@ -305,13 +305,13 @@ The -target and -exclude options are not for routine use, and are provided only 
 // check for any errors that may arise once the planned changes are added to
 // the graph. This allows tofu to report errors (mostly cycles) during
 // plan that would otherwise only crop up during apply
-func (c *Context) checkApplyGraph(plan *plans.Plan, config *configs.Config) tfdiags.Diagnostics {
+func (c *Context) checkApplyGraph(ctx context.Context, plan *plans.Plan, config *configs.Config) tfdiags.Diagnostics {
 	if plan.Changes.Empty() {
 		log.Println("[DEBUG] no planned changes, skipping apply graph check")
 		return nil
 	}
 	log.Println("[DEBUG] building apply graph to check for errors")
-	_, _, diags := c.applyGraph(plan, config, make(ProviderFunctionMapping))
+	_, _, diags := c.applyGraph(ctx, plan, config, make(ProviderFunctionMapping))
 	return diags
 }
 
@@ -487,7 +487,7 @@ func (c *Context) destroyPlan(ctx context.Context, config *configs.Config, prevR
 		destroyPlan.PrevRunState = prevRunState
 	}
 
-	relevantAttrs, rDiags := c.relevantResourceAttrsForPlan(config, destroyPlan)
+	relevantAttrs, rDiags := c.relevantResourceAttrsForPlan(ctx, config, destroyPlan)
 	diags = diags.Append(rDiags)
 
 	destroyPlan.RelevantAttributes = relevantAttrs
@@ -780,7 +780,7 @@ func (c *Context) planWalk(ctx context.Context, config *configs.Config, prevRunS
 	}
 	providerFunctionTracker := make(ProviderFunctionMapping)
 
-	graph, walkOp, moreDiags := c.planGraph(config, prevRunState, opts, providerFunctionTracker)
+	graph, walkOp, moreDiags := c.planGraph(ctx, config, prevRunState, opts, providerFunctionTracker)
 	diags = diags.Append(moreDiags)
 	if diags.HasErrors() {
 		return nil, diags
@@ -842,7 +842,7 @@ func (c *Context) planWalk(ctx context.Context, config *configs.Config, prevRunS
 	walker.RefreshState.RemovePlannedResourceInstanceObjects()
 	priorState := walker.RefreshState.Close()
 
-	driftedResources, driftDiags := c.driftedResources(config, prevRunState, priorState, moveResults)
+	driftedResources, driftDiags := c.driftedResources(ctx, config, prevRunState, priorState, moveResults)
 	diags = diags.Append(driftDiags)
 
 	plan := &plans.Plan{
@@ -861,7 +861,7 @@ func (c *Context) planWalk(ctx context.Context, config *configs.Config, prevRunS
 	return plan, diags
 }
 
-func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, opts *PlanOpts, providerFunctionTracker ProviderFunctionMapping) (*Graph, walkOperation, tfdiags.Diagnostics) {
+func (c *Context) planGraph(ctx context.Context, config *configs.Config, prevRunState *states.State, opts *PlanOpts, providerFunctionTracker ProviderFunctionMapping) (*Graph, walkOperation, tfdiags.Diagnostics) {
 	switch mode := opts.Mode; mode {
 	case plans.NormalMode:
 		graph, diags := (&PlanGraphBuilder{
@@ -880,7 +880,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			GenerateConfigPath:      opts.GenerateConfigPath,
 			RemoveStatements:        opts.RemoveStatements,
 			ProviderFunctionTracker: providerFunctionTracker,
-		}).Build(addrs.RootModuleInstance)
+		}).Build(ctx, addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.RefreshOnlyMode:
 		graph, diags := (&PlanGraphBuilder{
@@ -895,7 +895,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			Operation:               walkPlan,
 			ExternalReferences:      opts.ExternalReferences,
 			ProviderFunctionTracker: providerFunctionTracker,
-		}).Build(addrs.RootModuleInstance)
+		}).Build(ctx, addrs.RootModuleInstance)
 		return graph, walkPlan, diags
 	case plans.DestroyMode:
 		graph, diags := (&PlanGraphBuilder{
@@ -908,7 +908,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 			skipRefresh:             opts.SkipRefresh,
 			Operation:               walkPlanDestroy,
 			ProviderFunctionTracker: providerFunctionTracker,
-		}).Build(addrs.RootModuleInstance)
+		}).Build(ctx, addrs.RootModuleInstance)
 		return graph, walkPlanDestroy, diags
 	default:
 		// The above should cover all plans.Mode values
@@ -922,7 +922,7 @@ func (c *Context) planGraph(config *configs.Config, prevRunState *states.State, 
 // report. This is known to happen when targeting a subset of resources,
 // because the excluded instances will have been removed from the plan and
 // not upgraded.
-func (c *Context) driftedResources(config *configs.Config, oldState, newState *states.State, moves refactoring.MoveResults) ([]*plans.ResourceInstanceChangeSrc, tfdiags.Diagnostics) {
+func (c *Context) driftedResources(ctx context.Context, config *configs.Config, oldState, newState *states.State, moves refactoring.MoveResults) ([]*plans.ResourceInstanceChangeSrc, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 
 	if newState.ManagedResourcesEqual(oldState) && moves.Changes.Len() == 0 {
@@ -931,7 +931,7 @@ func (c *Context) driftedResources(config *configs.Config, oldState, newState *s
 		return nil, diags
 	}
 
-	schemas, schemaDiags := c.Schemas(config, newState)
+	schemas, schemaDiags := c.Schemas(ctx, config, newState)
 	diags = diags.Append(schemaDiags)
 	if diags.HasErrors() {
 		return nil, diags
@@ -1079,7 +1079,7 @@ func (c *Context) PlanGraphForUI(config *configs.Config, prevRunState *states.St
 
 	opts := &PlanOpts{Mode: mode}
 
-	graph, _, moreDiags := c.planGraph(config, prevRunState, opts, make(ProviderFunctionMapping))
+	graph, _, moreDiags := c.planGraph(context.TODO(), config, prevRunState, opts, make(ProviderFunctionMapping))
 	diags = diags.Append(moreDiags)
 	return graph, diags
 }
@@ -1108,8 +1108,8 @@ func blockedMovesWarningDiag(results refactoring.MoveResults) tfdiags.Diagnostic
 // referenceAnalyzer returns a globalref.Analyzer object to help with
 // global analysis of references within the configuration that's attached
 // to the receiving context.
-func (c *Context) referenceAnalyzer(config *configs.Config, state *states.State) (*globalref.Analyzer, tfdiags.Diagnostics) {
-	schemas, diags := c.Schemas(config, state)
+func (c *Context) referenceAnalyzer(ctx context.Context, config *configs.Config, state *states.State) (*globalref.Analyzer, tfdiags.Diagnostics) {
+	schemas, diags := c.Schemas(ctx, config, state)
 	if diags.HasErrors() {
 		return nil, diags
 	}
@@ -1118,8 +1118,8 @@ func (c *Context) referenceAnalyzer(config *configs.Config, state *states.State)
 
 // relevantResourceAttrsForPlan implements the heuristic we use to populate the
 // RelevantResources field of returned plans.
-func (c *Context) relevantResourceAttrsForPlan(config *configs.Config, plan *plans.Plan) ([]globalref.ResourceAttr, tfdiags.Diagnostics) {
-	azr, diags := c.referenceAnalyzer(config, plan.PriorState)
+func (c *Context) relevantResourceAttrsForPlan(ctx context.Context, config *configs.Config, plan *plans.Plan) ([]globalref.ResourceAttr, tfdiags.Diagnostics) {
+	azr, diags := c.referenceAnalyzer(ctx, config, plan.PriorState)
 	if diags.HasErrors() {
 		return nil, diags
 	}
