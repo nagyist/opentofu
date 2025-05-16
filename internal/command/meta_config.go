@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
@@ -22,6 +24,7 @@ import (
 	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/configs/configload"
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/httpclient"
 	"github.com/opentofu/opentofu/internal/initwd"
 	"github.com/opentofu/opentofu/internal/registry"
 	"github.com/opentofu/opentofu/internal/tfdiags"
@@ -287,7 +290,7 @@ func (m *Meta) installModules(ctx context.Context, rootDir, testsDir string, upg
 		return true, diags
 	}
 
-	inst := initwd.NewModuleInstaller(m.modulesDir(), loader, m.registryClient(), m.ModulePackageFetcher)
+	inst := initwd.NewModuleInstaller(m.modulesDir(), loader, m.registryClient(ctx), m.ModulePackageFetcher)
 
 	call, vDiags := m.rootModuleCall(ctx, rootDir)
 	diags = diags.Append(vDiags)
@@ -324,7 +327,7 @@ func (m *Meta) initDirFromModule(ctx context.Context, targetDir string, addr str
 	}
 
 	targetDir = m.normalizePath(targetDir)
-	moreDiags := initwd.DirFromModule(ctx, loader, targetDir, m.modulesDir(), addr, m.registryClient(), m.ModulePackageFetcher, hooks)
+	moreDiags := initwd.DirFromModule(ctx, loader, targetDir, m.modulesDir(), addr, m.registryClient(ctx), m.ModulePackageFetcher, hooks)
 	diags = diags.Append(moreDiags)
 	if ctx.Err() == context.Canceled {
 		m.showDiagnostics(diags)
@@ -441,7 +444,6 @@ func (m *Meta) initConfigLoader() (*configload.Loader, error) {
 	if m.configLoader == nil {
 		loader, err := configload.NewLoader(&configload.Config{
 			ModulesDir: m.modulesDir(),
-			Services:   m.Services,
 		})
 		if err != nil {
 			return nil, err
@@ -456,8 +458,24 @@ func (m *Meta) initConfigLoader() (*configload.Loader, error) {
 }
 
 // registryClient instantiates and returns a new Registry client.
-func (m *Meta) registryClient() *registry.Client {
-	return registry.NewClient(m.Services, nil)
+func (m *Meta) registryClient(ctx context.Context) *registry.Client {
+	httpClient := m.registryHTTPClient(ctx)
+	return registry.NewClient(ctx, m.Services, httpClient)
+}
+
+// registryHTTPClient returns a [retryablehttp.Client] intended for use in
+// any interactions with module or provider registries.
+//
+// This calls [Meta.MakeRegistryHTTPClient] if set, but provides a plausible
+// default client to use when that isn't set, since that's very common in
+// our test cases in this package.
+func (m *Meta) registryHTTPClient(ctx context.Context) *retryablehttp.Client {
+	if m.MakeRegistryHTTPClient != nil {
+		return m.MakeRegistryHTTPClient()
+	} else {
+		// Some reasonable default settings for most tests to use.
+		return httpclient.NewForRegistryRequests(ctx, 1, 10*time.Second)
+	}
 }
 
 // configValueFromCLI parses a configuration value that was provided in a
