@@ -112,14 +112,14 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 	// directory without needing to first disable that local mirror
 	// in the CLI configuration.
 	source := getproviders.NewMemoizeSource(
-		getproviders.NewRegistrySource(c.Services),
+		getproviders.NewRegistrySource(c.Services, c.registryHTTPClient(ctx)),
 	)
 
 	// Providers from registries always use HTTP, so we don't need the full
 	// generality of go-getter but it's still handy to use the HTTP getter
 	// as an easy way to download over HTTP into a file on disk.
 	httpGetter := getter.HttpGetter{
-		Client:                httpclient.New(),
+		Client:                httpclient.New(ctx),
 		Netrc:                 true,
 		XTerraformGetDisabled: true,
 	}

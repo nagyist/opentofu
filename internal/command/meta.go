@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-plugin"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/terraform-svchost/disco"
 	"github.com/mitchellh/cli"
 	"github.com/mitchellh/colorstring"
@@ -138,6 +139,15 @@ type Meta struct {
 	// in the source address) are supported, which is only reasonable for
 	// unit testing.
 	ModulePackageFetcher *getmodules.PackageFetcher
+
+	// MakeRegistryHTTPClient is a function called each time a command needs
+	// an HTTP client that will be used to make requests to a module or
+	// provider registry.
+	//
+	// This is used by package main to deal with some operator-configurable
+	// settings for retries and timeouts. If this isn't set then a new client
+	// with reasonable defaults for tests will be used instead.
+	MakeRegistryHTTPClient func() *retryablehttp.Client
 
 	// BrowserLauncher is used by commands that need to open a URL in a
 	// web browser.
@@ -945,7 +955,7 @@ func (c *Meta) MaybeGetSchemas(ctx context.Context, state *states.State, config 
 			return nil, diags
 		}
 		var schemaDiags tfdiags.Diagnostics
-		schemas, schemaDiags := tfCtx.Schemas(config, state)
+		schemas, schemaDiags := tfCtx.Schemas(ctx, config, state)
 		diags = diags.Append(schemaDiags)
 		if schemaDiags.HasErrors() {
 			return nil, diags

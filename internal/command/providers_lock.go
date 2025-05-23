@@ -134,12 +134,17 @@ func (c *ProvidersLockCommand) Run(args []string) int {
 			c.showDiagnostics(diags)
 			return 1
 		}
-		source = getproviders.NewHTTPMirrorSource(u, c.Services.CredentialsSource())
+		// For historical reasons, we use the registry client timeout for this
+		// even though this isn't actually a registry. The other behavior of
+		// this client is not suitable for the HTTP mirror source, so we
+		// don't use this client directly.
+		httpTimeout := c.registryHTTPClient(ctx).HTTPClient.Timeout
+		source = getproviders.NewHTTPMirrorSource(u, c.Services.CredentialsSource(), httpTimeout)
 	default:
 		// With no special options we consult upstream registries directly,
 		// because that gives us the most information to produce as complete
 		// and portable as possible a lock entry.
-		source = getproviders.NewRegistrySource(c.Services)
+		source = getproviders.NewRegistrySource(c.Services, c.registryHTTPClient(ctx))
 	}
 
 	config, confDiags := c.loadConfig(ctx, ".")
@@ -227,7 +232,7 @@ func (c *ProvidersLockCommand) Run(args []string) int {
 		evts := &providercache.InstallerEvents{
 			// Our output from this command is minimal just to show that
 			// we're making progress, rather than just silently hanging.
-			FetchPackageBegin: func(provider addrs.Provider, version getproviders.Version, loc getproviders.PackageLocation) {
+			FetchPackageBegin: func(provider addrs.Provider, version getproviders.Version, loc getproviders.PackageLocation, inCacheDirectory bool) {
 				c.Ui.Output(fmt.Sprintf("- Fetching %s %s for %s...", provider.ForDisplay(), version, platform))
 				if prevVersion, exists := selectedVersions[provider]; exists && version != prevVersion {
 					// This indicates a weird situation where we ended up
